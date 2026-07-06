@@ -1,5 +1,3 @@
-#core.py
-
 import datetime
 
 import pandas as pd
@@ -58,37 +56,129 @@ def resolver_simultaneidade(df_base):
     return df_representantes, ids_devolvidos, info_devolvidas
 
 
-def _aplicar_filtros_candidatas(cands, permitidas, coord_atual, coord_cache,
-                                 fim_atual, latencia_maxima_dias,
-                                 distancia_maxima_km=200):          # ── NOVO parâmetro
-    # permitidas == set() vazio quando usar_senioridade=False → bloco ignorado
+def _calcular_dist(cidade_a, cidade_b, coord_cache) -> float:
+    ca = coord_cache.get(str(cidade_a)) if cidade_a else None
+    cb = coord_cache.get(str(cidade_b)) if cidade_b else None
+    if ca and cb:
+        return geodesic(ca, cb).kilometers
+    return 9999.0
+
+
+def _filtrar_por_complexidade_dist_latencia(cands, permitidas, coord_atual,
+                                             coord_cache, fim_atual,
+                                             latencia_maxima_dias,
+                                             distancia_maxima_km,
+                                             sobreposicao_maxima_dias):
     if permitidas:
         cands = cands[cands["_complexidade_norm"].isin(permitidas)].copy()
     if cands.empty:
         return cands
 
     cands["_dist"] = cands[C_CIDADE_EMP].apply(
-        lambda cid_b: geodesic(coord_atual, coord_cache.get(cid_b)).kilometers
-        if coord_atual and coord_cache.get(cid_b) else 9999.0
+        lambda c: _calcular_dist(coord_cache.get(str(c)), coord_cache.get(str(c)), coord_cache)
+        if not coord_atual else
+        (geodesic(coord_atual, coord_cache.get(str(c))).kilometers
+         if coord_cache.get(str(c)) else 9999.0)
     )
-    # ── NOVO: usa distancia_maxima_km no lugar do 200 hardcoded
     cands = cands[cands["_dist"] <= distancia_maxima_km].copy()
     if cands.empty:
         return cands
 
     cands["_gap"] = (cands[C_TERRA_EMP] - fim_atual).dt.days
-    cands = cands[cands["_gap"] <= latencia_maxima_dias].copy()
+    cands = cands[
+        (cands["_gap"] <= latencia_maxima_dias) &
+        (cands["_gap"] >= -sobreposicao_maxima_dias)
+    ].copy()
 
     return cands
 
 
+def _buscar_em_linhas_existentes(df_candidatas, obras_alocadas,
+                                  coord_cache, fim_atual, cid_atual, clu_atual,
+                                  permitidas,
+                                  distancia_maxima_km, latencia_maxima_dias,
+                                  sobreposicao_maxima_dias,
+                                  mesmo_cluster, permitir_sobreposicao):
+    filtro_cluster = (
+        df_candidatas[C_CLUSTER_EMP] == clu_atual
+        if mesmo_cluster else
+        df_candidatas[C_CLUSTER_EMP] != clu_atual
+    )
+
+    if permitir_sobreposicao:
+        filtro_terra = (
+            (df_candidatas[C_TERRA_EMP] >= fim_atual - pd.Timedelta(days=sobreposicao_maxima_dias)) &
+            (df_candidatas[C_TERRA_EMP] < fim_atual)
+        )
+    else:
+        filtro_terra = df_candidatas[C_TERRA_EMP] >= fim_atual
+
+    cands = df_candidatas[
+        filtro_terra &
+        filtro_cluster &
+        (~df_candidatas[C_ID_EMP].astype(str).str.strip().isin(obras_alocadas))
+    ].copy()
+
+    if cands.empty:
+        return cands
+
+    coord_atual = coord_cache.get(str(cid_atual)) if cid_atual else None
+    sob_dias    = sobreposicao_maxima_dias if permitir_sobreposicao else 0
+
+    cands = _filtrar_por_complexidade_dist_latencia(
+        cands, permitidas, coord_atual, coord_cache,
+        fim_atual, latencia_maxima_dias, distancia_maxima_km, sob_dias
+    )
+
+    return cands
+
+
+def _buscar_em_novas_linhas(novas_linhas_dict, emp_row, coord_cache,
+                             cluster_emp,
+                             latencia_maxima_dias, sobreposicao_maxima_dias,
+                             distancia_maxima_km,
+                             mesmo_cluster, permitir_sobreposicao):
+    melhor_key = None
+    melhor_gap = None
+
+    for key, info in novas_linhas_dict.items():
+        if mesmo_cluster and info["cluster"] != cluster_emp:
+            continue
+        if not mesmo_cluster and info["cluster"] == cluster_emp:
+            continue
+
+        ultimo_encerr = info["ultimo_encerr"]
+        if ultimo_encerr is None or pd.isna(ultimo_encerr):
+            continue
+
+        gap = (emp_row[C_TERRA_EMP] - ultimo_encerr).days
+
+        if permitir_sobreposicao:
+            if not (-sobreposicao_maxima_dias <= gap < 0):
+                continue
+        else:
+            if not (0 <= gap <= latencia_maxima_dias):
+                continue
+
+        dist = _calcular_dist(info["ultima_cidade"], emp_row.get(C_CIDADE_EMP), coord_cache)
+        if dist > distancia_maxima_km:
+            continue
+
+        if melhor_gap is None or gap < melhor_gap:
+            melhor_gap = gap
+            melhor_key = key
+
+    return melhor_key, melhor_gap
+
+
 def sequenciar_linhas_existentes(df_base_repr, df_emp, coord_cache, info_devolvidas,
                                   latencia_maxima_dias=90,
+                                  sobreposicao_maxima_dias=0,
                                   nomes_base_completo=None,
                                   ids_base_completo=None,
                                   usar_senioridade=True,
-                                  distancia_maxima_km=200,          # ── NOVO parâmetro
-                                  permitir_cluster_diferente=True): # ── NOVO parâmetro
+                                  distancia_maxima_km=200,
+                                  permitir_cluster_diferente=True):
 
     df_candidatas = df_emp[
         df_emp[C_TERRA_EMP].notna() &
@@ -102,7 +192,8 @@ def sequenciar_linhas_existentes(df_base_repr, df_emp, coord_cache, info_devolvi
     )
 
     for col in [C_PROX_OBRA, C_ID_PROX, C_TERRA_PROX, C_ENCERR_PROX,
-                C_CIDADE_PROX, C_ORIGEM, C_LATENCIA, C_DISTANCIA, C_FONTE_PROX]:
+                C_CIDADE_PROX, C_ORIGEM, C_LATENCIA, C_DISTANCIA,
+                C_FONTE_PROX, "Sobreposição"]:
         if col not in df_base_repr.columns:
             df_base_repr[col] = None
 
@@ -111,8 +202,9 @@ def sequenciar_linhas_existentes(df_base_repr, df_emp, coord_cache, info_devolvi
         ids_base |= ids_base_completo
 
     mask_dh = df_base_repr[C_PROX_OBRA].notna() & (df_base_repr[C_PROX_OBRA].astype(str).str.strip() != "")
-    df_base_repr.loc[mask_dh, C_FONTE_PROX] = "DH"
-    df_base_repr.loc[mask_dh, C_ORIGEM]     = "Sequenciamento DH"
+    df_base_repr.loc[mask_dh, C_FONTE_PROX]   = "DH"
+    df_base_repr.loc[mask_dh, C_ORIGEM]        = "Sequenciamento DH"
+    df_base_repr.loc[mask_dh, "Sobreposição"]  = "Não"
 
     obras_alocadas = set(df_base_repr[C_ID_PROX].dropna().astype(str).str.strip().unique())
     obras_alocadas |= ids_base
@@ -159,64 +251,70 @@ def sequenciar_linhas_existentes(df_base_repr, df_emp, coord_cache, info_devolvi
         if pd.notna(row[C_PROX_OBRA]) and str(row[C_PROX_OBRA]).strip() != "":
             continue
 
-        fim_atual  = row[C_DATA_ENCERR]
-        cid_atual  = row[C_CIDADE]
-        clu_atual  = row[C_CLUSTER]
-        sen_atual  = row[C_SENIORIDADE]
+        fim_atual = row[C_DATA_ENCERR]
+        cid_atual = row[C_CIDADE]
+        clu_atual = row[C_CLUSTER]
+        sen_atual = row[C_SENIORIDADE]
 
         if pd.isna(fim_atual) or pd.isna(cid_atual) or pd.isna(clu_atual):
             continue
 
-        permitidas  = complexidades_permitidas_para(sen_atual) if usar_senioridade else set()
-        coord_atual = coord_cache.get(cid_atual)
+        permitidas = complexidades_permitidas_para(sen_atual) if usar_senioridade else set()
 
-        # ── tentativa 1: mesmo cluster
-        cands = df_candidatas[
-            (df_candidatas[C_TERRA_EMP] >= fim_atual) &
-            (df_candidatas[C_CLUSTER_EMP] == clu_atual) &
-            (~df_candidatas[C_ID_EMP].astype(str).str.strip().isin(obras_alocadas))
-        ].copy()
+        resultado          = None
+        cluster_diff       = False
+        houve_sobreposicao = False
 
-        cands = _aplicar_filtros_candidatas(
-            cands, permitidas, coord_atual, coord_cache,
-            fim_atual, latencia_maxima_dias, distancia_maxima_km  # ── NOVO
-        )
-        cluster_diff = False
+        tentativas = [
+            (True,  False),
+            (True,  True),
+        ]
+        if permitir_cluster_diferente:
+            tentativas += [
+                (False, False),
+                (False, True),
+            ]
 
-        # ── tentativa 2: cluster diferente (somente se permitir_cluster_diferente=True)
-        if cands.empty and permitir_cluster_diferente:             # ── NOVO
-            cands = df_candidatas[
-                (df_candidatas[C_TERRA_EMP] >= fim_atual) &
-                (df_candidatas[C_CLUSTER_EMP] != clu_atual) &
-                (~df_candidatas[C_ID_EMP].astype(str).str.strip().isin(obras_alocadas))
-            ].copy()
-            cands = _aplicar_filtros_candidatas(
-                cands, permitidas, coord_atual, coord_cache,
-                fim_atual, latencia_maxima_dias, distancia_maxima_km  # ── NOVO
+        for mesmo_cluster, com_sobreposicao in tentativas:
+            if com_sobreposicao and sobreposicao_maxima_dias == 0:
+                continue
+
+            cands = _buscar_em_linhas_existentes(
+                df_candidatas, obras_alocadas,
+                coord_cache, fim_atual, cid_atual, clu_atual,
+                permitidas,
+                distancia_maxima_km, latencia_maxima_dias,
+                sobreposicao_maxima_dias,
+                mesmo_cluster, com_sobreposicao
             )
-            cluster_diff = True
 
-        if cands.empty:
+            if not cands.empty:
+                resultado          = cands.sort_values("_gap").iloc[0]
+                cluster_diff       = not mesmo_cluster
+                houve_sobreposicao = com_sobreposicao or (int(resultado["_gap"]) < 0)
+                break
+
+        if resultado is None:
             continue
 
-        res = cands.sort_values("_gap").iloc[0]
-
+        gap_resultado = int(resultado["_gap"])
         origem_seq = (
             "Sequenciamento - ferramenta (cluster diferente)"
             if cluster_diff else
             "Sequenciamento - ferramenta"
         )
 
-        df_base_repr.at[i, C_PROX_OBRA]   = res[C_NOME_EMP]
-        df_base_repr.at[i, C_ID_PROX]     = res[C_ID_EMP]
-        df_base_repr.at[i, C_TERRA_PROX]  = res[C_TERRA_EMP]
-        df_base_repr.at[i, C_ENCERR_PROX] = res[C_ENCERR_EMP]
-        df_base_repr.at[i, C_CIDADE_PROX] = res[C_CIDADE_EMP]
-        df_base_repr.at[i, C_ORIGEM]      = origem_seq
-        df_base_repr.at[i, C_LATENCIA]    = res["_gap"]
-        df_base_repr.at[i, C_DISTANCIA]   = round(res["_dist"], 2)
-        df_base_repr.at[i, C_FONTE_PROX]  = "Ferramenta"
-        obras_alocadas.add(str(res[C_ID_EMP]).strip())
+        df_base_repr.at[i, C_PROX_OBRA]    = resultado[C_NOME_EMP]
+        df_base_repr.at[i, C_ID_PROX]      = resultado[C_ID_EMP]
+        df_base_repr.at[i, C_TERRA_PROX]   = resultado[C_TERRA_EMP]
+        df_base_repr.at[i, C_ENCERR_PROX]  = resultado[C_ENCERR_EMP]
+        df_base_repr.at[i, C_CIDADE_PROX]  = resultado[C_CIDADE_EMP]
+        df_base_repr.at[i, C_ORIGEM]       = origem_seq
+        df_base_repr.at[i, C_LATENCIA]     = gap_resultado
+        df_base_repr.at[i, C_DISTANCIA]    = round(resultado["_dist"], 2)
+        df_base_repr.at[i, C_FONTE_PROX]   = "Ferramenta"
+        df_base_repr.at[i, "Sobreposição"] = "Sim" if houve_sobreposicao else "Não"
+        obras_alocadas.add(str(resultado[C_ID_EMP]).strip())
 
     status_seq.empty()
     barra.empty()
@@ -233,8 +331,11 @@ def sequenciar_linhas_existentes(df_base_repr, df_emp, coord_cache, info_devolvi
 
 
 def sequenciar_novas_linhas(df_emp, coord_cache, obras_alocadas, info_devolvidas,
-                             latencia_maxima_dias=90, nomes_dh_alocados=None,
-                             distancia_maxima_km=200):              # ── NOVO parâmetro
+                             latencia_maxima_dias=90,
+                             sobreposicao_maxima_dias=0,
+                             nomes_dh_alocados=None,
+                             distancia_maxima_km=200,
+                             permitir_cluster_diferente=False):
 
     if nomes_dh_alocados:
         ids_bloqueados_por_nome = set(
@@ -286,7 +387,7 @@ def sequenciar_novas_linhas(df_emp, coord_cache, obras_alocadas, info_devolvidas
             "Linha", "Ordem", "OBRA", "Cód. CRM", "Regional", "Cidade", "CLUSTER",
             "Complexidade Obra", "Data Fundação", "Data Terraplenagem",
             "Data Encerramento Módulo", "Fonte da Próxima Obra",
-            "Origem Sequenciamento", "Latência (Dias)", "Distância (km)"
+            "Origem Sequenciamento", "Latência (Dias)", "Distância (km)", "Sobreposição"
         ])
 
     st.info(f"🔁 {len(obras_nao_alocadas)} empreendimento(s) no pool — criando novas linhas por cluster...")
@@ -305,33 +406,40 @@ def sequenciar_novas_linhas(df_emp, coord_cache, obras_alocadas, info_devolvidas
 
         if id_emp in obras_alocadas:
             continue
-
         if nomes_dh_alocados and str(emp_row.get(C_NOME_EMP, "")).strip() in nomes_dh_alocados:
             continue
 
-        linha_nova_key = None
-        melhor_gap     = None
+        linha_nova_key     = None
+        melhor_gap         = None
+        houve_sobreposicao = False
 
-        for key, info in novas_linhas_dict.items():
-            if info["cluster"] != cluster_emp:
+        tentativas = [
+            (True,  False),
+            (True,  True),
+        ]
+        if permitir_cluster_diferente:
+            tentativas += [
+                (False, False),
+                (False, True),
+            ]
+
+        for mesmo_cluster, com_sobreposicao in tentativas:
+            if com_sobreposicao and sobreposicao_maxima_dias == 0:
                 continue
-            ultimo_encerr = info["ultimo_encerr"]
-            if pd.isna(ultimo_encerr) or ultimo_encerr is None:
-                continue
-            if emp_row[C_TERRA_EMP] < ultimo_encerr:
-                continue
-            gap       = (emp_row[C_TERRA_EMP] - ultimo_encerr).days
-            if gap > latencia_maxima_dias:
-                continue
-            coord_ult = coord_cache.get(info["ultima_cidade"])
-            coord_emp = coord_cache.get(str(emp_row.get(C_CIDADE_EMP, "")))
-            dist      = geodesic(coord_ult, coord_emp).kilometers if coord_ult and coord_emp else 9999.0
-            # ── NOVO: usa distancia_maxima_km no lugar do 200 hardcoded
-            if dist > distancia_maxima_km:
-                continue
-            if melhor_gap is None or gap < melhor_gap:
-                melhor_gap     = gap
-                linha_nova_key = key
+
+            key, gap = _buscar_em_novas_linhas(
+                novas_linhas_dict, emp_row, coord_cache,
+                cluster_emp,
+                latencia_maxima_dias, sobreposicao_maxima_dias,
+                distancia_maxima_km,
+                mesmo_cluster, com_sobreposicao
+            )
+
+            if key is not None:
+                linha_nova_key     = key
+                melhor_gap         = gap
+                houve_sobreposicao = com_sobreposicao or (gap is not None and gap < 0)
+                break
 
         if linha_nova_key is None:
             if cluster_emp not in contador_novas_linhas:
@@ -345,6 +453,7 @@ def sequenciar_novas_linhas(df_emp, coord_cache, obras_alocadas, info_devolvidas
                 "ultima_cidade": None,
                 "ordem":         0,
             }
+            houve_sobreposicao = False
 
         info          = novas_linhas_dict[linha_nova_key]
         ordem_emp     = info["ordem"] + 1
@@ -352,13 +461,13 @@ def sequenciar_novas_linhas(df_emp, coord_cache, obras_alocadas, info_devolvidas
         ultima_cidade = info["ultima_cidade"]
 
         if ultimo_encerr is not None and pd.notna(ultimo_encerr):
-            gap_dias  = (emp_row[C_TERRA_EMP] - ultimo_encerr).days
-            coord_ult = coord_cache.get(str(ultima_cidade))
-            coord_emp = coord_cache.get(str(emp_row.get(C_CIDADE_EMP, "")))
-            dist_km   = round(geodesic(coord_ult, coord_emp).kilometers, 2) if coord_ult and coord_emp else None
+            gap_dias = (emp_row[C_TERRA_EMP] - ultimo_encerr).days
+            dist_km  = round(_calcular_dist(ultima_cidade, emp_row.get(C_CIDADE_EMP), coord_cache), 2)
+            flag_sob = "Sim" if gap_dias < 0 else "Não"
         else:
             gap_dias = None
             dist_km  = None
+            flag_sob = "Não"
 
         novas_linhas_rows.append({
             "Linha":                    linha_nova_key,
@@ -376,6 +485,7 @@ def sequenciar_novas_linhas(df_emp, coord_cache, obras_alocadas, info_devolvidas
             "Origem Sequenciamento":    "Sequenciamento - ferramenta",
             "Latência (Dias)":          gap_dias,
             "Distância (km)":           dist_km,
+            "Sobreposição":             flag_sob,
         })
 
         novas_linhas_dict[linha_nova_key]["ultimo_encerr"] = emp_row[C_ENCERR_EMP]
@@ -396,7 +506,7 @@ def montar_output_empilhado(df_base_repr, df_simultaneas, df_novas_linhas, mapa_
         "Data Fundação", "Data Terraplenagem", "Data Encerramento Módulo",
         "Marco Início Obra A", "Simultaneidade",
         "Fonte da Próxima Obra", "Origem Sequenciamento",
-        "Latência (Dias)", "Distância (km)",
+        "Latência (Dias)", "Distância (km)", "Sobreposição",
     ]
 
     c_marco_base = C_DATA_TERRA if marco_inicio_obra_a == "Terraplenagem" else C_DATA_FUND
@@ -426,15 +536,15 @@ def montar_output_empilhado(df_base_repr, df_simultaneas, df_novas_linhas, mapa_
             "Origem Sequenciamento":    None,
             "Latência (Dias)":          None,
             "Distância (km)":           None,
+            "Sobreposição":             None,
         })
 
         tem_prox = pd.notna(row.get(C_PROX_OBRA)) and str(row.get(C_PROX_OBRA, "")).strip() != ""
         if not tem_prox:
             continue
 
-        id_prox    = row.get(C_ID_PROX)
-        emp_match  = mapa_emp.get(id_prox, {})
-        fonte_prox = row.get(C_FONTE_PROX)
+        id_prox   = row.get(C_ID_PROX)
+        emp_match = mapa_emp.get(id_prox, {})
 
         linhas.append({
             "Linha":                    linha_id,
@@ -452,10 +562,11 @@ def montar_output_empilhado(df_base_repr, df_simultaneas, df_novas_linhas, mapa_
             "Data Encerramento Módulo": row.get(C_ENCERR_PROX),
             "Marco Início Obra A":      None,
             "Simultaneidade":           None,
-            "Fonte da Próxima Obra":    fonte_prox,
+            "Fonte da Próxima Obra":    row.get(C_FONTE_PROX),
             "Origem Sequenciamento":    row.get(C_ORIGEM),
             "Latência (Dias)":          row.get(C_LATENCIA),
             "Distância (km)":           row.get(C_DISTANCIA),
+            "Sobreposição":             row.get("Sobreposição", "Não"),
         })
 
     for item in df_simultaneas:
@@ -481,6 +592,7 @@ def montar_output_empilhado(df_base_repr, df_simultaneas, df_novas_linhas, mapa_
             "Origem Sequenciamento":    None,
             "Latência (Dias)":          None,
             "Distância (km)":           None,
+            "Sobreposição":             None,
         })
 
     for _, row in df_novas_linhas.iterrows():
@@ -504,6 +616,7 @@ def montar_output_empilhado(df_base_repr, df_simultaneas, df_novas_linhas, mapa_
             "Origem Sequenciamento":    row["Origem Sequenciamento"],
             "Latência (Dias)":          row["Latência (Dias)"],
             "Distância (km)":           row["Distância (km)"],
+            "Sobreposição":             row.get("Sobreposição", "Não"),
         })
 
     return pd.DataFrame(linhas, columns=colunas_saida)

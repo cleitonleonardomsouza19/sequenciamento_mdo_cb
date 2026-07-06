@@ -92,13 +92,13 @@ def render_preview(df_base, df_emp):
 
 
 def render_configuracao_marco() -> str:
-    st.markdown("#### ⚙️ Configuração do Marco de Início da Obra A")
+    st.markdown("#### ⚙️ Configuração do Marco de Início da Obra B")
     st.caption(
         "Selecione qual data será usada como **marco de início** da Obra A (linhas existentes, Ordem 1). "
         "Essa data será exibida na coluna **'Marco Início Obra A'** no resultado."
     )
     marco = st.radio(
-        label="Marco de início da Obra A:",
+        label="Marco de início da Obra B:",
         options=["Terraplenagem", "Fundação"],
         index=1,
         horizontal=True,
@@ -115,21 +115,43 @@ def render_configuracao_marco() -> str:
     return marco
 
 
-def render_filtro_latencia() -> int:
-    st.markdown("#### ⏱️ Tempo máximo de prateleira (latência)")
+def render_filtro_latencia() -> tuple[int, int]:
+    st.markdown("#### ⏱️ Tempo máximo de prateleira (latência) e sobreposição")
     st.caption(
-        "Define o intervalo máximo (em meses) entre o **término da Obra A** "
-        "e o **início da Obra B**. Obras com gap maior serão ignoradas no sequenciamento."
+        "**Latência** define o gap máximo (em meses) entre o **término da Obra A** e o **início da Obra B**. "
+        "**Sobreposição** define quantos meses a Obra B pode começar **antes** do término da Obra A."
     )
-    meses = st.selectbox(
-        label="Latência máxima permitida:",
-        options=[3, 4, 5, 6, 7],
-        index=0,
-        format_func=lambda x: f"{x} mês" if x == 1 else f"{x} meses",
-        key="filtro_latencia"
-    )
-    st.info(f"📌 Latência máxima: **{meses} meses** ({meses * 30} dias)")
-    return meses
+
+    col_lat, col_sob = st.columns(2)
+
+    with col_lat:
+        st.markdown("**Latência máxima permitida:**")
+        meses = st.selectbox(
+            label="Latência máxima permitida:",
+            options=[3, 4, 5, 6, 7],
+            index=0,
+            format_func=lambda x: f"{x} mês" if x == 1 else f"{x} meses",
+            key="filtro_latencia",
+            label_visibility="collapsed",
+        )
+        st.info(f"📌 Latência máxima: **{meses} meses** ({meses * 30} dias)")
+
+    with col_sob:
+        st.markdown("**Sobreposição máxima permitida:**")
+        sobreposicao = st.selectbox(
+            label="Sobreposição máxima permitida:",
+            options=[0, 1, 2, 3],
+            index=0,
+            format_func=lambda x: "Sem sobreposição" if x == 0 else (f"{x} mês" if x == 1 else f"{x} meses"),
+            key="filtro_sobreposicao",
+            label_visibility="collapsed",
+        )
+        if sobreposicao == 0:
+            st.info("📌 Sobreposição: **não permitida** — B só começa após A terminar")
+        else:
+            st.warning(f"📌 Sobreposição: **até {sobreposicao} meses** — B pode começar {sobreposicao * 30} dias antes de A terminar")
+
+    return meses, sobreposicao
 
 
 def render_filtro_senioridade() -> bool:
@@ -207,13 +229,17 @@ def render_botao_iniciar() -> bool:
         )
 
     if clicou:
-        # ✅ Congela snapshot dos valores no momento exato do clique
-        st.session_state["sequenciamento_rodando"]  = True
-        st.session_state["snap_usar_senioridade"]   = st.session_state.get("filtro_senioridade",     True)
-        st.session_state["snap_distancia_km"]       = st.session_state.get("filtro_distancia_km",    50)
-        st.session_state["snap_permitir_cluster"]   = st.session_state.get("filtro_cluster_diferente", True)
-        st.session_state["snap_marco"]              = st.session_state.get("marco_inicio_obra_a",    "Fundação")
-        st.session_state["snap_latencia"]           = st.session_state.get("filtro_latencia",        3)
+        st.session_state["sequenciamento_rodando"]    = True
+        st.session_state["snap_usar_senioridade"]     = st.session_state.get("filtro_senioridade",       True)
+        st.session_state["snap_distancia_km"]         = st.session_state.get("filtro_distancia_km",      50)
+        st.session_state["snap_permitir_cluster"]     = st.session_state.get("filtro_cluster_diferente", True)
+        st.session_state["snap_marco"]                = st.session_state.get("marco_inicio_obra_a",      "Fundação")
+        st.session_state["snap_latencia"]             = st.session_state.get("filtro_latencia",          3)
+        st.session_state["snap_sobreposicao"]         = st.session_state.get("filtro_sobreposicao",      0)
+
+        # Inicializa o contador de cenário apenas na primeira execução da sessão
+        if "contador_cenario" not in st.session_state:
+            st.session_state["contador_cenario"] = 1
 
     if not st.session_state.get("sequenciamento_rodando", False):
         with col_status:
@@ -224,9 +250,9 @@ def render_botao_iniciar() -> bool:
 
 
 def render_resumo_parametros():
-    """Exibe um resumo visual dos parâmetros congelados no momento do clique."""
     marco            = st.session_state.get("snap_marco",            "Fundação")
     latencia         = st.session_state.get("snap_latencia",         3)
+    sobreposicao     = st.session_state.get("snap_sobreposicao",     0)
     usar_senioridade = st.session_state.get("snap_usar_senioridade", True)
     distancia_km     = st.session_state.get("snap_distancia_km",     50)
     permitir_cluster = st.session_state.get("snap_permitir_cluster", True)
@@ -245,6 +271,12 @@ def render_resumo_parametros():
 
             st.markdown("**⏱️ Latência Máxima**")
             st.info(f"📌 {latencia} meses ({latencia * 30} dias)")
+
+            st.markdown("**🔀 Sobreposição Máxima**")
+            if sobreposicao == 0:
+                st.info("📌 Sem sobreposição permitida")
+            else:
+                st.warning(f"📌 Até {sobreposicao} meses ({sobreposicao * 30} dias)")
 
         with col2:
             st.markdown("**🎓 Senioridade e Complexidade**")
@@ -297,6 +329,39 @@ def render_resultado(df_output):
         )
 
 
+# ─────────────────────────────────────────────────────────────
+# Funções auxiliares para o download com nome dinâmico
+# ─────────────────────────────────────────────────────────────
+
+def _montar_nome_arquivo() -> str:
+    """
+    Monta o nome do arquivo no padrão:
+    NN-SEQ-CB-MARCO-LAT-SOBR-SENC-DIST-CLUS.xlsx
+    Lê os parâmetros travados no session_state pelo botão iniciar.
+    """
+    marco            = st.session_state.get("snap_marco",            "Fundação")
+    latencia         = st.session_state.get("snap_latencia",         3)
+    sobreposicao     = st.session_state.get("snap_sobreposicao",     0)
+    usar_senioridade = st.session_state.get("snap_usar_senioridade", True)
+    distancia_km     = st.session_state.get("snap_distancia_km",     50)
+    permitir_cluster = st.session_state.get("snap_permitir_cluster", True)
+
+    nn       = str(st.session_state.get("contador_cenario", 1)).zfill(2)
+    marco_cod = "FND" if marco == "Fundação" else "TRP"
+    lat_cod   = f"L{latencia}"
+    sob_cod   = f"S{sobreposicao}"
+    senc_cod  = "SC1" if usar_senioridade else "SC0"
+    dist_cod  = f"D{int(distancia_km)}"
+    clus_cod  = "CL0" if permitir_cluster else "CL1"
+
+    return f"{nn}-SEQ-CB-{marco_cod}-{lat_cod}-{sob_cod}-{senc_cod}-{dist_cod}-{clus_cod}.xlsx"
+
+
+def _incrementar_contador():
+    """Incrementa o NN a cada clique no botão de download."""
+    st.session_state["contador_cenario"] = st.session_state.get("contador_cenario", 1) + 1
+
+
 def render_download(df_output, df_emp):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -304,9 +369,15 @@ def render_download(df_output, df_emp):
             writer, sheet_name="Sequenciamento", index=False
         )
         df_emp.to_excel(writer, sheet_name="Todos Empreendimentos", index=False)
+
+    nome_arquivo = _montar_nome_arquivo()
+
     st.download_button(
         label     = "📥 Baixar Planilha Sequenciada",
         data      = buffer.getvalue(),
-        file_name = "Sequenciamento_MRV.xlsx",
-        mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        file_name = nome_arquivo,
+        mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        on_click  = _incrementar_contador,
     )
+
+    st.caption(f"📄 Nome do arquivo que será baixado: `{nome_arquivo}`")

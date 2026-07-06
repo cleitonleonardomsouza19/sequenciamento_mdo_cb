@@ -5,12 +5,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 import datetime
 
-# ──────────────────────────────────────────────
-# HELPERS
-# ──────────────────────────────────────────────
-
 def set_cell_bg(cell, hex_color: str):
-    """Pinta o fundo de uma célula com a cor hex informada (ex: '006B3F')."""
     tc   = cell._tc
     tcPr = tc.get_or_add_tcPr()
     shd  = OxmlElement('w:shd')
@@ -21,7 +16,6 @@ def set_cell_bg(cell, hex_color: str):
 
 
 def add_header_row(table, headers: list, bg_hex='006B3F', font_color='FFFFFF'):
-    """Preenche a primeira linha da tabela como cabeçalho estilizado."""
     row = table.rows[0]
     for i, text in enumerate(headers):
         cell = row.cells[i]
@@ -35,7 +29,6 @@ def add_header_row(table, headers: list, bg_hex='006B3F', font_color='FFFFFF'):
 
 
 def add_data_rows(table, data: list, start_row=1, alt_color='E6F4EE'):
-    """Preenche linhas de dados com zebra-striping."""
     for i, row_data in enumerate(data):
         row = table.rows[start_row + i]
         for j, text in enumerate(row_data):
@@ -47,7 +40,6 @@ def add_data_rows(table, data: list, start_row=1, alt_color='E6F4EE'):
 
 
 def add_table(doc, headers: list, data: list, col_widths: list = None):
-    """Cria tabela completa com cabeçalho + dados."""
     table       = doc.add_table(rows=1 + len(data), cols=len(headers))
     table.style = 'Table Grid'
     add_header_row(table, headers)
@@ -73,16 +65,11 @@ def section_divider(doc):
     doc.add_paragraph('')
 
 
-# ──────────────────────────────────────────────
-# DOCUMENTO
-# ──────────────────────────────────────────────
-
 doc  = Document()
 base = doc.styles['Normal']
 base.font.name = 'Calibri'
 base.font.size = Pt(11)
 
-# ── CAPA ──────────────────────────────────────
 titulo = doc.add_heading('Documentação Técnica', level=0)
 titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -98,9 +85,6 @@ data_doc.runs[0].font.color.rgb = RGBColor(0x00, 0x6B, 0x3F)
 
 doc.add_page_break()
 
-# ══════════════════════════════════════════════
-# SUMÁRIO
-# ══════════════════════════════════════════════
 doc.add_heading('Sumário', level=1)
 
 sumario_itens = [
@@ -113,13 +97,15 @@ sumario_itens = [
     '5.  Configurações do Usuário',
     '    5.1  Marco de Início da Obra A',
     '    5.2  Filtro de Latência Máxima',
+    '    5.3  Sobreposição Máxima Permitida',
     '6.  Pré-processamento',
     '    6.1  Montagem da Linha (pivot)',
     '    6.2  Resolução de Simultaneidade',
     '    6.3  Filtro de Obras Candidatas',
     '7.  Critérios de Sequenciamento — Linhas Existentes',
-    '    7.1  1ª Tentativa: Mesmo Cluster',
-    '    7.2  2ª Tentativa: Fallback para Outros Clusters',
+    '    7.1  1ª Tentativa: Mesmo Cluster (sem sobreposição)',
+    '    7.2  2ª Tentativa: Mesmo Cluster (com sobreposição)',
+    '    7.3  3ª Tentativa: Fallback para Outros Clusters',
     '8.  Criação de Novas Linhas',
     '    8.1  O que é uma Nova Linha',
     '    8.2  Quando uma Nova Linha é criada',
@@ -138,9 +124,6 @@ for item in sumario_itens:
 
 doc.add_page_break()
 
-# ══════════════════════════════════════════════
-# 1. VISÃO GERAL
-# ══════════════════════════════════════════════
 doc.add_heading('1. Visão Geral', level=1)
 doc.add_paragraph(
     'O Sequenciador de Capacete Branco é uma aplicação web desenvolvida em Python com Streamlit '
@@ -151,9 +134,6 @@ doc.add_paragraph(
 )
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 2. OBJETIVO
-# ══════════════════════════════════════════════
 doc.add_heading('2. Objetivo', level=1)
 doc.add_paragraph(
     'Garantir que cada Capacete Branco, ao finalizar sua obra atual, tenha uma próxima obra '
@@ -163,9 +143,6 @@ doc.add_paragraph(
 )
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 3. FLUXO GERAL
-# ══════════════════════════════════════════════
 doc.add_heading('3. Fluxo Geral da Aplicação', level=1)
 
 etapas = [
@@ -175,8 +152,9 @@ etapas = [
     'Montagem da coluna "Linha" (pivot: CLUSTER | Sigla Senioridade | Responsável 1).',
     'Resolução de simultaneidade: obras simultâneas na mesma linha são devolvidas ao pool.',
     'Geocodificação das cidades (coordenadas via Nominatim/OpenStreetMap).',
-    'Sequenciamento das linhas existentes: 1ª tentativa no mesmo cluster; se não encontrar, '
-    'fallback para outros clusters dentro do raio de 200 km e da latência máxima configurada.',
+    '1ª tentativa de sequenciamento: mesmo cluster, sem sobreposição de datas.',
+    '2ª tentativa de sequenciamento: mesmo cluster, permitindo sobreposição de até N meses (configurável pelo usuário). A prioridade é sempre sequenciar sem sobrepor — a sobreposição é usada apenas quando não há obra disponível sem sobreposição.',
+    '3ª tentativa de sequenciamento (fallback): outros clusters dentro do raio de distância e da latência máxima configurada.',
     'Criação de novas linhas: obras não alocadas são agrupadas em novas linhas por cluster.',
     'Montagem do output empilhado por linha e ordem.',
     'Exibição do resultado na tela + download da planilha Excel gerada.',
@@ -185,12 +163,8 @@ for etapa in etapas:
     add_numbered(doc, etapa)
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 4. PLANILHAS DE ENTRADA
-# ══════════════════════════════════════════════
 doc.add_heading('4. Planilhas de Entrada', level=1)
 
-# 4.1 Base
 doc.add_heading('4.1  Guia Base', level=2)
 doc.add_paragraph(
     'Planilha principal com os engenheiros/responsáveis e suas obras atuais. '
@@ -224,7 +198,6 @@ data_base = [
 add_table(doc, headers_base, data_base, col_widths=[2.0, 0.7, 0.9, 3.2])
 section_divider(doc)
 
-# 4.2 Sheet1
 doc.add_heading('4.2  Guia Sheet1 — Todos Empreendimentos', level=2)
 doc.add_paragraph(
     'Catálogo completo de empreendimentos disponíveis para sequenciamento. '
@@ -247,12 +220,8 @@ data_emp = [
 add_table(doc, headers_emp, data_emp, col_widths=[1.8, 0.7, 0.9, 3.3])
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 5. CONFIGURAÇÕES DO USUÁRIO
-# ══════════════════════════════════════════════
 doc.add_heading('5. Configurações do Usuário', level=1)
 
-# 5.1
 doc.add_heading('5.1  Marco de Início da Obra A', level=2)
 doc.add_paragraph(
     'Define qual data será registrada na coluna "Marco Início Obra A" '
@@ -267,7 +236,6 @@ data_cfg = [
 add_table(doc, headers_cfg, data_cfg, col_widths=[1.5, 2.5, 3.2])
 section_divider(doc)
 
-# 5.2
 doc.add_heading('5.2  Filtro de Latência Máxima', level=2)
 doc.add_paragraph(
     'O usuário define a latência máxima permitida entre o encerramento de uma obra e o início '
@@ -277,15 +245,22 @@ doc.add_paragraph(
 add_bullet(doc, 'Intervalo permitido: de 3 meses a 7 meses.')
 add_bullet(doc, 'Valor padrão: 3 meses (90 dias).')
 add_bullet(doc, 'Internamente o valor em meses é convertido para dias (meses × 30).')
-add_bullet(doc,
-    'Obras cuja latência calculada exceder o limite configurado são descartadas '
-    'da tentativa atual e podem originar uma nova linha.'
-)
+add_bullet(doc, 'Obras cuja latência calculada exceder o limite configurado são descartadas da tentativa atual e podem originar uma nova linha.')
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 6. PRÉ-PROCESSAMENTO
-# ══════════════════════════════════════════════
+doc.add_heading('5.3  Sobreposição Máxima Permitida', level=2)
+doc.add_paragraph(
+    'O usuário define quantos meses de sobreposição entre obras podem ser tolerados como plano B. '
+    'A sobreposição ocorre quando a Data Terraplenagem da próxima obra é anterior ao '
+    'Data Encerramento Módulo da obra atual — ou seja, as duas obras se sobrepõem no tempo.'
+)
+add_bullet(doc, 'A prioridade do app é SEMPRE sequenciar sem sobreposição.')
+add_bullet(doc, 'A sobreposição só é considerada quando não existe nenhuma obra disponível sem sobreposição dentro dos demais critérios.')
+add_bullet(doc, 'Valor configurável pelo usuário (ex.: 2 meses = até 60 dias de sobreposição tolerada).')
+add_bullet(doc, 'Se configurado como 0, o app nunca aceita sobreposição.')
+add_bullet(doc, 'O valor de sobreposição configurado é refletido no nome do arquivo gerado (ex.: sobreposic2meses).')
+section_divider(doc)
+
 doc.add_heading('6. Pré-processamento', level=1)
 
 doc.add_heading('6.1  Montagem da Linha (pivot)', level=2)
@@ -314,61 +289,65 @@ add_bullet(doc, 'Têm Data Terraplenagem ≥ data de hoje (obras futuras).')
 add_bullet(doc, 'Não estão presentes na guia Base (não são obras já em andamento).')
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 7. CRITÉRIOS DE SEQUENCIAMENTO — LINHAS EXISTENTES
-# ══════════════════════════════════════════════
 doc.add_heading('7. Critérios de Sequenciamento — Linhas Existentes', level=1)
 doc.add_paragraph(
     'Para cada linha existente (guia Base) que ainda não possui "Próxima Obra" definida, '
-    'o app realiza duas tentativas de sequenciamento antes de desistir.'
+    'o app realiza até três tentativas de sequenciamento antes de desistir.'
 )
 
-# 7.1
-doc.add_heading('7.1  1ª Tentativa: Mesmo Cluster', level=2)
+doc.add_heading('7.1  1ª Tentativa: Mesmo Cluster (sem sobreposição)', level=2)
 doc.add_paragraph(
     'O app busca candidatas dentro do mesmo cluster da linha existente, '
-    'aplicando os seguintes filtros em ordem:'
+    'exigindo que a Data Terraplenagem da candidata seja maior ou igual ao '
+    'Data Encerramento Módulo da obra atual (gap ≥ 0 dias — sem sobreposição).'
 )
 
 headers_crit = ['#', 'Critério', 'Regra']
 data_crit = [
-    ('1', 'Janela Temporal',  'Data Terraplenagem da candidata ≥ Data Encerramento Módulo da obra atual'),
-    ('2', 'Mesmo Cluster',    'CLUSTER_CORRIGIDO da candidata = CLUSTER da linha existente'),
-    ('3', 'Complexidade',     'Compatível com a senioridade do Engenheiro 1 (ver seção 10)'),
-    ('4', 'Distância',        'Distância entre cidades ≤ 200 km (via Geopy/Nominatim)'),
-    ('5', 'Latência Máxima',  'Gap em dias entre encerramento e terraplenagem ≤ latência máxima configurada'),
-    ('6', 'Disponibilidade',  'Obra ainda não alocada em nenhuma outra linha'),
-    ('7', 'Menor gap (dias)', 'Dentre as candidatas válidas, seleciona a de menor gap em dias'),
+    ('1', 'Janela Temporal',   'Data Terraplenagem da candidata ≥ Data Encerramento Módulo da obra atual (sem sobreposição)'),
+    ('2', 'Mesmo Cluster',     'CLUSTER_CORRIGIDO da candidata = CLUSTER da linha existente'),
+    ('3', 'Complexidade',      'Compatível com a senioridade do Engenheiro 1 (ver seção 10)'),
+    ('4', 'Distância',         'Distância entre cidades ≤ limite configurado pelo usuário (via Geopy/Nominatim)'),
+    ('5', 'Latência Máxima',   'Gap em dias entre encerramento e terraplenagem ≤ latência máxima configurada'),
+    ('6', 'Disponibilidade',   'Obra ainda não alocada em nenhuma outra linha'),
+    ('7', 'Menor gap (dias)',  'Dentre as candidatas válidas, seleciona a de menor gap em dias'),
 ]
 add_table(doc, headers_crit, data_crit, col_widths=[0.4, 1.8, 5.0])
 section_divider(doc)
 
-# 7.2
-doc.add_heading('7.2  2ª Tentativa: Fallback para Outros Clusters', level=2)
+doc.add_heading('7.2  2ª Tentativa: Mesmo Cluster (com sobreposição)', level=2)
 doc.add_paragraph(
-    'Se nenhuma candidata for encontrada no mesmo cluster, o app realiza uma segunda busca '
-    'considerando obras de outros clusters. Os mesmos filtros de complexidade, distância (≤ 200 km) '
-    'e latência máxima são aplicados. A obra selecionada recebe a marcação '
-    '"Sequenciamento - ferramenta (cluster diferente)" na coluna Origem Sequenciamento, '
-    'permitindo ao usuário identificar facilmente os casos de cruzamento de cluster.'
+    'Se nenhuma candidata for encontrada sem sobreposição, o app realiza uma segunda busca '
+    'no mesmo cluster, desta vez tolerando sobreposição de até N meses (configurado pelo usuário). '
+    'Essa tentativa só ocorre quando o usuário configurou sobreposição máxima > 0. '
+    'Os demais critérios de complexidade, distância e latência máxima continuam sendo aplicados.'
+)
+add_bullet(doc, 'A sobreposição é o último recurso dentro do mesmo cluster — a prioridade é sempre sequenciar sem sobrepor.')
+add_bullet(doc, 'Obras alocadas nessa tentativa recebem a marcação "Sequenciamento - ferramenta" na coluna Origem Sequenciamento.')
+section_divider(doc)
+
+doc.add_heading('7.3  3ª Tentativa: Fallback para Outros Clusters', level=2)
+doc.add_paragraph(
+    'Se nenhuma candidata for encontrada no mesmo cluster (nem sem nem com sobreposição), '
+    'o app realiza uma terceira busca considerando obras de outros clusters. '
+    'Os mesmos filtros de complexidade, distância e latência máxima são aplicados. '
+    'A obra selecionada recebe a marcação '
+    '"Sequenciamento - ferramenta (cluster diferente)" na coluna Origem Sequenciamento.'
 )
 
 headers_fb = ['Situação', 'Origem Sequenciamento gravada']
 data_fb = [
-    ('Sequenciou no mesmo cluster',     'Sequenciamento - ferramenta'),
-    ('Sequenciou em cluster diferente', 'Sequenciamento - ferramenta (cluster diferente)'),
-    ('Veio preenchido na guia Base',    'Sequenciamento DH'),
-    ('Obra em nova linha criada',       'Sequenciamento - ferramenta'),
+    ('Sequenciou no mesmo cluster (sem sobreposição)',     'Sequenciamento - ferramenta'),
+    ('Sequenciou no mesmo cluster (com sobreposição)',     'Sequenciamento - ferramenta'),
+    ('Sequenciou em cluster diferente',                    'Sequenciamento - ferramenta (cluster diferente)'),
+    ('Veio preenchido na guia Base',                       'Sequenciamento DH'),
+    ('Obra em nova linha criada',                          'Sequenciamento - ferramenta'),
 ]
 add_table(doc, headers_fb, data_fb, col_widths=[3.5, 4.0])
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 8. CRIAÇÃO DE NOVAS LINHAS
-# ══════════════════════════════════════════════
 doc.add_heading('8. Criação de Novas Linhas', level=1)
 
-# 8.1
 doc.add_heading('8.1  O que é uma Nova Linha', level=2)
 doc.add_paragraph(
     'Uma Nova Linha representa uma sequência de obras que não está vinculada a nenhum '
@@ -382,7 +361,6 @@ p.runs[0].bold   = True
 p.paragraph_format.left_indent = Inches(0.5)
 doc.add_paragraph('Exemplo:  SP-01 | Linha nova 1').runs[0].italic = True
 
-# 8.2
 doc.add_heading('8.2  Quando uma Nova Linha é criada', level=2)
 doc.add_paragraph(
     'O app tenta encaixar cada obra não alocada em duas etapas antes de criar uma nova linha:'
@@ -391,7 +369,8 @@ doc.add_paragraph(
 doc.add_paragraph('Etapa 1 — Linhas Existentes (guia Base)').runs[0].bold = True
 doc.add_paragraph(
     'O app tenta alocar a obra como "Próxima Obra" de uma linha existente, '
-    'primeiro no mesmo cluster e depois em outros clusters (fallback). '
+    'primeiro no mesmo cluster (sem sobreposição), depois no mesmo cluster (com sobreposição tolerada) '
+    'e por fim em outros clusters (fallback). '
     'Se nenhuma linha existente aceitar a obra, ela vai para o pool de não alocadas.'
 )
 
@@ -399,7 +378,7 @@ doc.add_paragraph('Etapa 2 — Novas Linhas já criadas nesta execução').runs[
 doc.add_paragraph(
     'O app verifica se alguma nova linha já criada pode receber a obra. '
     'Os critérios são: mesmo cluster, terraplenagem ≥ encerramento da última obra da linha, '
-    'distância ≤ 200 km da última cidade e gap ≤ latência máxima configurada. '
+    'distância ≤ limite configurado da última cidade e gap ≤ latência máxima configurada. '
     'Dentre as elegíveis, escolhe a de menor gap em dias.'
 )
 
@@ -409,23 +388,23 @@ doc.add_paragraph(
     'o app cria uma nova linha para o cluster da obra e a aloca como primeira obra dessa linha.'
 )
 
-# 8.3
 doc.add_heading('8.3  Fluxo de Decisão', level=2)
 
 fluxo = [
-    ('Obra candidata não alocada',                          '↓'),
-    ('Cabe em linha EXISTENTE — mesmo cluster?',            'SIM → aloca como Ordem 2 | Origem: Sequenciamento - ferramenta'),
-    ('',                                                    'NÃO ↓'),
-    ('Cabe em linha EXISTENTE — outro cluster?',            'SIM → aloca como Ordem 2 | Origem: Sequenciamento - ferramenta (cluster diferente)'),
-    ('',                                                    'NÃO ↓'),
-    ('Cabe em NOVA LINHA já criada (mesmo cluster)?',       'SIM → aloca na nova linha (Ordem N)'),
-    ('',                                                    'NÃO ↓'),
-    ('🆕 Cria nova linha: {CLUSTER} | Linha nova {N}',      'Obra alocada como Ordem 1 da nova linha'),
+    ('Obra candidata não alocada',                                    '↓'),
+    ('Cabe em linha EXISTENTE — mesmo cluster, sem sobreposição?',    'SIM → aloca como Ordem 2 | Origem: Sequenciamento - ferramenta'),
+    ('',                                                              'NÃO ↓'),
+    ('Cabe em linha EXISTENTE — mesmo cluster, com sobreposição?',    'SIM → aloca como Ordem 2 | Origem: Sequenciamento - ferramenta'),
+    ('',                                                              'NÃO ↓'),
+    ('Cabe em linha EXISTENTE — outro cluster?',                      'SIM → aloca como Ordem 2 | Origem: Sequenciamento - ferramenta (cluster diferente)'),
+    ('',                                                              'NÃO ↓'),
+    ('Cabe em NOVA LINHA já criada (mesmo cluster)?',                 'SIM → aloca na nova linha (Ordem N)'),
+    ('',                                                              'NÃO ↓'),
+    ('🆕 Cria nova linha: {CLUSTER} | Linha nova {N}',               'Obra alocada como Ordem 1 da nova linha'),
 ]
 headers_fluxo = ['Decisão', 'Resultado']
 add_table(doc, headers_fluxo, fluxo, col_widths=[3.5, 4.0])
 
-# 8.4
 doc.add_heading('8.4  Nomenclatura e Ordenação', level=2)
 add_bullet(doc, 'As obras não alocadas são ordenadas por Data Terraplenagem (crescente) antes do agrupamento.')
 add_bullet(doc, 'O contador de novas linhas é por cluster: cada cluster tem seu próprio contador (Linha nova 1, Linha nova 2, ...).')
@@ -433,9 +412,6 @@ add_bullet(doc, 'Obras devolvidas ao pool por simultaneidade também passam por 
 add_bullet(doc, 'A coluna "Origem Sequenciamento" de todas as obras em novas linhas recebe o valor "Sequenciamento - ferramenta".')
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 9. PLANILHA DE SAÍDA
-# ══════════════════════════════════════════════
 doc.add_heading('9. Planilha de Saída — Colunas Geradas', level=1)
 doc.add_paragraph(
     'O resultado é uma tabela empilhada onde cada linha representa uma obra dentro de uma sequência. '
@@ -462,22 +438,19 @@ data_saida = [
     ('Fonte da Próxima Obra',    'Texto',  '"DH" = veio da guia Base | "Ferramenta" = sugerida pelo app'),
     ('Origem Sequenciamento',    'Texto',
      '"Sequenciamento DH" = já existia na Base | '
-     '"Sequenciamento - ferramenta" = app sequenciou no mesmo cluster | '
+     '"Sequenciamento - ferramenta" = app sequenciou (mesmo cluster, com ou sem sobreposição) | '
      '"Sequenciamento - ferramenta (cluster diferente)" = app sequenciou via fallback de cluster'),
-    ('Latência (Dias)',          'Número', 'Gap em dias entre encerramento da obra anterior e terraplenagem desta'),
+    ('Latência (Dias)',          'Número', 'Gap em dias entre encerramento da obra anterior e terraplenagem desta (negativo indica sobreposição)'),
     ('Distância (km)',           'Número', 'Distância em km da obra anterior para esta'),
 ]
 add_table(doc, headers_saida, data_saida, col_widths=[2.0, 0.8, 4.4])
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 10. REGRAS DE COMPLEXIDADE
-# ══════════════════════════════════════════════
 doc.add_heading('10. Regras de Complexidade por Senioridade', level=1)
 doc.add_paragraph(
     'O app verifica a senioridade do Engenheiro 1 da linha e restringe as obras candidatas '
-    'às complexidades permitidas para aquele nível. A regra se aplica tanto na 1ª tentativa '
-    '(mesmo cluster) quanto no fallback (outros clusters):'
+    'às complexidades permitidas para aquele nível. A regra se aplica em todas as tentativas '
+    'de sequenciamento (sem sobreposição, com sobreposição e fallback de cluster):'
 )
 
 headers_comp = ['Senioridade', 'Sigla gerada', 'Complexidades permitidas']
@@ -491,9 +464,6 @@ data_comp = [
 add_table(doc, headers_comp, data_comp, col_widths=[2.2, 1.2, 3.8])
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 11. GEOCODIFICAÇÃO E DISTÂNCIAS
-# ══════════════════════════════════════════════
 doc.add_heading('11. Geocodificação e Distâncias', level=1)
 doc.add_paragraph(
     'O app utiliza o serviço Nominatim (OpenStreetMap) via biblioteca Geopy para obter as '
@@ -503,13 +473,10 @@ doc.add_paragraph(
     'Obras cuja cidade não for encontrada pelo geocodificador recebem distância 9999 km e são descartadas.'
 )
 add_bullet(doc, 'Intervalo entre requisições: ~1,1 segundo (respeito ao rate limit do Nominatim).')
-add_bullet(doc, 'Limite de distância aplicado: 200 km — válido tanto para mesmo cluster quanto para fallback.')
+add_bullet(doc, 'Limite de distância aplicado: configurável pelo usuário — válido para todas as tentativas de sequenciamento.')
 add_bullet(doc, 'Cidades não encontradas: distância definida como 9999 km → obra descartada.')
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 12. TECNOLOGIAS UTILIZADAS
-# ══════════════════════════════════════════════
 doc.add_heading('12. Tecnologias Utilizadas', level=1)
 
 headers_tech = ['Tecnologia', 'Versão mínima', 'Uso']
@@ -525,9 +492,6 @@ data_tech = [
 add_table(doc, headers_tech, data_tech, col_widths=[1.8, 1.2, 4.2])
 section_divider(doc)
 
-# ══════════════════════════════════════════════
-# 13. LIMITAÇÕES E OBSERVAÇÕES
-# ══════════════════════════════════════════════
 doc.add_heading('13. Limitações e Observações', level=1)
 
 headers_lim = ['Item', 'Detalhe']
@@ -550,6 +514,10 @@ data_lim = [
      'O cruzamento de cluster é identificado na coluna "Origem Sequenciamento" com o valor '
      '"Sequenciamento - ferramenta (cluster diferente)". '
      'Recomenda-se revisar esses casos manualmente antes de publicar o sequenciamento.'),
+    ('Sobreposição como plano B',
+     'A sobreposição entre obras só é aceita quando não existe nenhuma obra disponível sem sobreposição '
+     'dentro dos critérios de cluster, complexidade, distância e latência. '
+     'O valor máximo de sobreposição tolerada é configurável pelo usuário e refletido no nome do arquivo gerado.'),
     ('Latência máxima',
      'O filtro de latência (3 a 7 meses) é aplicado tanto no sequenciamento de linhas existentes '
      'quanto na criação de novas linhas. Obras fora da janela não são descartadas permanentemente — '
@@ -558,7 +526,6 @@ data_lim = [
 add_table(doc, headers_lim, data_lim, col_widths=[2.0, 5.2])
 section_divider(doc)
 
-# ── RODAPÉ ────────────────────────────────────
 doc.add_paragraph('')
 rodape = doc.add_paragraph(
     f'Documentação gerada automaticamente em {datetime.date.today().strftime("%d/%m/%Y")} '
@@ -568,7 +535,6 @@ rodape.alignment              = WD_ALIGN_PARAGRAPH.CENTER
 rodape.runs[0].italic         = True
 rodape.runs[0].font.color.rgb = RGBColor(0x00, 0x6B, 0x3F)
 
-# ── SALVAR ────────────────────────────────────
 nome_arquivo = 'Documentacao_Sequenciador_CB_MRV_v2.1.docx'
 doc.save(nome_arquivo)
 print(f'✅ Arquivo gerado: {nome_arquivo}')

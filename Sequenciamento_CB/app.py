@@ -68,8 +68,6 @@ render_diagnostico(df_base)
 
 st.divider()
 
-# ── Renderiza todos os filtros (apenas para exibição e captura no session_state)
-# ── Os valores REAIS usados no sequenciamento vêm dos snaps gravados no momento do clique
 render_configuracao_marco()
 render_filtro_latencia()
 render_filtro_senioridade()
@@ -77,16 +75,15 @@ render_filtro_distancia_cluster()
 
 st.divider()
 
-# ── render_botao_iniciar() grava os snaps no momento do clique e retorna False até ser clicado
 if not render_botao_iniciar():
     st.stop()
 
-# ── Lê os valores congelados no momento do clique — imunes a reruns posteriores
 marco_inicio_obra_a        = st.session_state.get("snap_marco",            "Fundação")
-latencia_maxima_meses      = st.session_state.get("snap_latencia",         3)
+latencia_maxima_meses      = st.session_state.get("snap_latencia",         5)
+sobreposicao_maxima_meses  = st.session_state.get("snap_sobreposicao",     0)
 usar_senioridade           = st.session_state.get("snap_usar_senioridade", True)
-distancia_maxima_km        = st.session_state.get("snap_distancia_km",     50)
-permitir_cluster_diferente = st.session_state.get("snap_permitir_cluster", True)
+distancia_maxima_km        = st.session_state.get("snap_distancia_km",     75)
+permitir_cluster_diferente = st.session_state.get("snap_permitir_cluster", False)
 
 for col in [C_DATA_FUND, C_DATA_TERRA, C_DATA_ENCERR]:
     if col in df_base.columns:
@@ -112,6 +109,7 @@ coord_cache = obter_dicionario_coordenadas(tuple(sorted(cidades_unicas)))
 df_base_repr, obras_alocadas, nomes_dh_alocados = sequenciar_linhas_existentes(
     df_base_repr, df_emp, coord_cache, info_devolvidas,
     latencia_maxima_dias=latencia_maxima_meses * 30,
+    sobreposicao_maxima_dias=sobreposicao_maxima_meses * 30,
     nomes_base_completo=nomes_base_completo,
     ids_base_completo=ids_base_completo,
     usar_senioridade=usar_senioridade,
@@ -122,6 +120,7 @@ df_base_repr, obras_alocadas, nomes_dh_alocados = sequenciar_linhas_existentes(
 df_novas_linhas = sequenciar_novas_linhas(
     df_emp, coord_cache, obras_alocadas, info_devolvidas,
     latencia_maxima_dias=latencia_maxima_meses * 30,
+    sobreposicao_maxima_dias=sobreposicao_maxima_meses * 30,
     nomes_dh_alocados=nomes_dh_alocados,
     distancia_maxima_km=distancia_maxima_km,
 )
@@ -133,7 +132,7 @@ df_output = montar_output_empilhado(
 
 st.divider()
 st.success("✅ Sequenciamento concluído!")
-render_resumo_parametros()        # ── exibe parâmetros congelados usados no sequenciamento
+render_resumo_parametros()
 st.divider()
 render_resultado(df_output)
 st.divider()
