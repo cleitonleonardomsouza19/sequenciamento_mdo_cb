@@ -63,11 +63,11 @@ def render_guia_colunas():
 def render_upload():
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        st.markdown("#### 📄 Planilha 1 — Base")
+        st.markdown("#### 📄 Planilha 1 — Base DH: Sequenciamento Inicial")
         st.caption("Deve conter a guia **Base** com os engenheiros e obras atuais.")
         arquivo_base = st.file_uploader("Suba a planilha Base aqui", type=["xlsx"], key="upload_base")
     with col_up2:
-        st.markdown("#### 📄 Planilha 2 — Todos Empreendimentos")
+        st.markdown("#### 📄 Planilha 2 — Empreendimentos: Último Forecast")
         st.caption("Deve conter a guia **Sheet1** com o catálogo de obras candidatas.")
         arquivo_empreendimentos = st.file_uploader("Suba a planilha de Empreendimentos aqui", type=["xlsx"], key="upload_emp")
 
@@ -91,50 +91,49 @@ def render_preview(df_base, df_emp):
             st.dataframe(df_emp, use_container_width=True)
 
 
-def render_configuracao_marco() -> str:
-    st.markdown("#### ⚙️ Configuração do Marco de Início da Obra B")
+def render_filtro_latencia() -> tuple[int, int, int]:
+    st.markdown("#### ⏱️ Janela de latência (mínima e máxima) e sobreposição")
     st.caption(
-        "Selecione qual data será usada como **marco de início** da Obra A (linhas existentes, Ordem 1). "
-        "Essa data será exibida na coluna **'Marco Início Obra A'** no resultado."
-    )
-    marco = st.radio(
-        label="Marco de início da Obra B:",
-        options=["Terraplenagem", "Fundação"],
-        index=1,
-        horizontal=True,
-        help=(
-            "**Terraplenagem** → usa a coluna 'Data Terraplenagem' da guia Base.\n\n"
-            "**Fundação** → usa a coluna 'Data Fundação' da guia Base."
-        ),
-        key="marco_inicio_obra_a"
-    )
-    if marco == "Terraplenagem":
-        st.info("📌 Marco selecionado: **Terraplenagem** — coluna `Data Terraplenagem` (guia Base)")
-    else:
-        st.info("📌 Marco selecionado: **Fundação** — coluna `Data Fundação` (guia Base)")
-    return marco
-
-
-def render_filtro_latencia() -> tuple[int, int]:
-    st.markdown("#### ⏱️ Tempo máximo de prateleira (latência) e sobreposição")
-    st.caption(
-        "**Latência** define o gap máximo (em meses) entre o **término da Obra A** e o **início da Obra B**. "
+        "**Latência** é o gap entre o **Encerramento Módulo da Obra A** e a **Fundação da Obra B**. "
+        "A **latência mínima** garante um intervalo mínimo entre obras. "
+        "A **latência máxima** limita o tempo máximo de prateleira. "
         "**Sobreposição** define quantos meses a Obra B pode começar **antes** do término da Obra A."
     )
 
-    col_lat, col_sob = st.columns(2)
+    col_min, col_max, col_sob = st.columns(3)
 
-    with col_lat:
-        st.markdown("**Latência máxima permitida:**")
-        meses = st.selectbox(
-            label="Latência máxima permitida:",
-            options=[3, 4, 5, 6, 7],
-            index=0,
-            format_func=lambda x: f"{x} mês" if x == 1 else f"{x} meses",
-            key="filtro_latencia",
+    with col_min:
+        st.markdown("**Latência mínima obrigatória:**")
+        meses_min = st.selectbox(
+            label="Latência mínima:",
+            options=[0, 1, 2, 3, 4, 5, 6],
+            index=2,                          # padrão = 2 meses
+            format_func=lambda x: "Sem mínimo" if x == 0 else (f"{x} mês" if x == 1 else f"{x} meses"),
+            key="filtro_latencia_min",
             label_visibility="collapsed",
         )
-        st.info(f"📌 Latência máxima: **{meses} meses** ({meses * 30} dias)")
+        if meses_min == 0:
+            st.info("📌 Latência mínima: **sem restrição**")
+        else:
+            st.info(f"📌 Latência mínima: **{meses_min} meses** ({meses_min * 30} dias)")
+
+    with col_max:
+        st.markdown("**Latência máxima permitida:**")
+        meses_max = st.selectbox(
+            label="Latência máxima permitida:",
+            options=[3, 4, 5, 6, 7],
+            index=2,                          # padrão = 5 meses
+            format_func=lambda x: f"{x} mês" if x == 1 else f"{x} meses",
+            key="filtro_latencia_max",
+            label_visibility="collapsed",
+        )
+        st.info(f"📌 Latência máxima: **{meses_max} meses** ({meses_max * 30} dias)")
+
+    if meses_min > meses_max:
+        st.error(
+            f"⚠️ A latência mínima ({meses_min} meses) não pode ser maior que a máxima ({meses_max} meses). "
+            "Ajuste os valores antes de iniciar o sequenciamento."
+        )
 
     with col_sob:
         st.markdown("**Sobreposição máxima permitida:**")
@@ -147,11 +146,11 @@ def render_filtro_latencia() -> tuple[int, int]:
             label_visibility="collapsed",
         )
         if sobreposicao == 0:
-            st.info("📌 Sobreposição: **não permitida** — B só começa após A terminar")
+            st.info("📌 Sobreposição: **não permitida**")
         else:
-            st.warning(f"📌 Sobreposição: **até {sobreposicao} meses** — B pode começar {sobreposicao * 30} dias antes de A terminar")
+            st.warning(f"📌 Sobreposição: **até {sobreposicao} meses** ({sobreposicao * 30} dias)")
 
-    return meses, sobreposicao
+    return meses_min, meses_max, sobreposicao
 
 
 def render_filtro_senioridade() -> bool:
@@ -168,7 +167,7 @@ def render_filtro_senioridade() -> bool:
         help=(
             "✅ **Marcado** → aplica o filtro de complexidade conforme a senioridade do ENG1.\n\n"
             "☐ **Desmarcado** → ignora complexidade; sequencia usando apenas cluster, "
-            "distância (≤ 200 km) e latência."
+            "distância e latência."
         ),
     )
     if usar:
@@ -182,8 +181,7 @@ def render_filtro_distancia_cluster() -> tuple[int, bool]:
     st.markdown("#### 📍 Distância máxima e cluster")
     st.caption(
         "Define o raio máximo (em km) entre a obra atual e a próxima obra candidata, "
-        "e se o sequenciador pode sugerir obras de **cluster diferente** como fallback "
-        "quando não houver candidatas no mesmo cluster."
+        "e se o sequenciador pode sugerir obras de **cluster diferente** como fallback."
     )
 
     col_dist, col_cluster = st.columns(2)
@@ -196,7 +194,7 @@ def render_filtro_distancia_cluster() -> tuple[int, bool]:
             value=50,
             step=25,
             key="filtro_distancia_km",
-            help="Obras em cidades com distância superior a esse valor serão ignoradas no sequenciamento.",
+            help="Obras em cidades com distância superior a esse valor serão ignoradas.",
         )
         st.info(f"📌 Distância máxima: **{distancia_km} km**")
 
@@ -207,14 +205,14 @@ def render_filtro_distancia_cluster() -> tuple[int, bool]:
             key="filtro_cluster_diferente",
             help=(
                 "✅ **Marcado** → se não houver candidatas no mesmo cluster, "
-                "o sequenciador tenta obras de outros clusters (dentro do raio e latência).\n\n"
+                "o sequenciador tenta obras de outros clusters.\n\n"
                 "☐ **Desmarcado** → apenas obras do mesmo cluster são consideradas."
             ),
         )
         if permitir_cluster_diferente:
-            st.info("📌 Cluster diferente: **permitido** — usado como fallback quando necessário.")
+            st.info("📌 Cluster diferente: **permitido** — usado como fallback.")
         else:
-            st.warning("📌 Cluster diferente: **bloqueado** — apenas obras do mesmo cluster serão sugeridas.")
+            st.warning("📌 Cluster diferente: **bloqueado** — apenas mesmo cluster.")
 
     return distancia_km, permitir_cluster_diferente
 
@@ -229,15 +227,23 @@ def render_botao_iniciar() -> bool:
         )
 
     if clicou:
-        st.session_state["sequenciamento_rodando"]    = True
-        st.session_state["snap_usar_senioridade"]     = st.session_state.get("filtro_senioridade",       True)
-        st.session_state["snap_distancia_km"]         = st.session_state.get("filtro_distancia_km",      50)
-        st.session_state["snap_permitir_cluster"]     = st.session_state.get("filtro_cluster_diferente", True)
-        st.session_state["snap_marco"]                = st.session_state.get("marco_inicio_obra_a",      "Fundação")
-        st.session_state["snap_latencia"]             = st.session_state.get("filtro_latencia",          3)
-        st.session_state["snap_sobreposicao"]         = st.session_state.get("filtro_sobreposicao",      0)
+        lat_min = st.session_state.get("filtro_latencia_min", 2)
+        lat_max = st.session_state.get("filtro_latencia_max", 5)
+        if lat_min > lat_max:
+            st.error(
+                f"⚠️ Latência mínima ({lat_min} meses) maior que a máxima ({lat_max} meses). "
+                "Corrija antes de iniciar."
+            )
+            return False
 
-        # Inicializa o contador de cenário apenas na primeira execução da sessão
+        st.session_state["sequenciamento_rodando"]  = True
+        st.session_state["snap_usar_senioridade"]   = st.session_state.get("filtro_senioridade",       True)
+        st.session_state["snap_distancia_km"]       = st.session_state.get("filtro_distancia_km",      50)
+        st.session_state["snap_permitir_cluster"]   = st.session_state.get("filtro_cluster_diferente", True)
+        st.session_state["snap_latencia_min"]       = st.session_state.get("filtro_latencia_min",      2)
+        st.session_state["snap_latencia_max"]       = st.session_state.get("filtro_latencia_max",      5)
+        st.session_state["snap_sobreposicao"]       = st.session_state.get("filtro_sobreposicao",      0)
+
         if "contador_cenario" not in st.session_state:
             st.session_state["contador_cenario"] = 1
 
@@ -248,10 +254,9 @@ def render_botao_iniciar() -> bool:
 
     return True
 
-
 def render_resumo_parametros():
-    marco            = st.session_state.get("snap_marco",            "Fundação")
-    latencia         = st.session_state.get("snap_latencia",         3)
+    lat_min          = st.session_state.get("snap_latencia_min",     2)
+    lat_max          = st.session_state.get("snap_latencia_max",     5)
     sobreposicao     = st.session_state.get("snap_sobreposicao",     0)
     usar_senioridade = st.session_state.get("snap_usar_senioridade", True)
     distancia_km     = st.session_state.get("snap_distancia_km",     50)
@@ -266,11 +271,14 @@ def render_resumo_parametros():
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            st.markdown("**⚙️ Marco de Início da Obra A**")
-            st.info(f"📌 {marco}")
+            st.markdown("**⏱️ Latência Mínima**")
+            if lat_min == 0:
+                st.info("📌 Sem latência mínima")
+            else:
+                st.info(f"📌 {lat_min} meses ({lat_min * 30} dias)")
 
             st.markdown("**⏱️ Latência Máxima**")
-            st.info(f"📌 {latencia} meses ({latencia * 30} dias)")
+            st.info(f"📌 {lat_max} meses ({lat_max * 30} dias)")
 
             st.markdown("**🔀 Sobreposição Máxima**")
             if sobreposicao == 0:
@@ -281,9 +289,9 @@ def render_resumo_parametros():
         with col2:
             st.markdown("**🎓 Senioridade e Complexidade**")
             if usar_senioridade:
-                st.success("✅ Ativada — regras de complexidade por senioridade aplicadas")
+                st.success("✅ Ativada")
             else:
-                st.warning("⚠️ Desativada — complexidade ignorada no sequenciamento")
+                st.warning("⚠️ Desativada")
 
             st.markdown("**📍 Distância Máxima entre Obras**")
             st.info(f"📌 {distancia_km} km")
@@ -291,9 +299,12 @@ def render_resumo_parametros():
         with col3:
             st.markdown("**🗂️ Cluster Diferente como Fallback**")
             if permitir_cluster:
-                st.success("✅ Permitido — usado quando não há candidatas no mesmo cluster")
+                st.success("✅ Permitido")
             else:
-                st.warning("⚠️ Bloqueado — apenas obras do mesmo cluster consideradas")
+                st.warning("⚠️ Bloqueado")
+
+            st.markdown("**📐 Marco de Latência (fixo)**")
+            st.info("📌 Fundação da Obra B")
 
 
 def render_diagnostico(df_base):
@@ -317,10 +328,9 @@ def render_resultado(df_output):
         st.caption(
             "🔑 **Linha** é o pivot. "
             "**Tipo de Linha**: `Existente` = veio da guia Base | `Nova` = criada pelo app. "
-            "**Marco Início Obra A**: data usada como início da Obra A conforme seleção do usuário. "
             "**Simultaneidade**: `Sim — devolvida ao pool` = obra estava simultânea e foi redistribuída. "
             "**Fonte da Próxima Obra**: `DH` = veio da guia Base | `Ferramenta` = sugerida pelo app. "
-            "**Origem Sequenciamento**: `Sequenciamento DH` = já existia na Base | `Sequenciamento - ferramenta` = app sequenciou."
+            "**Latência**: gap em dias entre Encerramento Módulo da Obra A e Fundação da Obra B."
         )
         st.dataframe(
             df_output.sort_values(["Linha", "Ordem"], na_position="last"),
@@ -330,35 +340,39 @@ def render_resultado(df_output):
 
 
 # ─────────────────────────────────────────────────────────────
-# Funções auxiliares para o download com nome dinâmico
+# Nome do arquivo — padrão compatível com Power BI
+# NN-SEQ-CB-Lmin{N}-L{N}-S{N}-SC{N}-D{N}-CL{N}.xlsx
+#
+# Segmentos:
+#   NN        → contador de cenário com zero à esquerda
+#   Lmin{N}   → latência mínima em meses  (ex.: Lmin2)
+#   L{N}      → latência máxima em meses  (ex.: L5)
+#   S{N}      → sobreposição em meses     (ex.: S0)
+#   SC{0|1}   → senioridade: SC1=ativa / SC0=inativa
+#   D{N}      → distância máxima em km    (ex.: D75)
+#   CL{0|1}   → cluster: CL0=permite diff / CL1=bloqueia
 # ─────────────────────────────────────────────────────────────
 
 def _montar_nome_arquivo() -> str:
-    """
-    Monta o nome do arquivo no padrão:
-    NN-SEQ-CB-MARCO-LAT-SOBR-SENC-DIST-CLUS.xlsx
-    Lê os parâmetros travados no session_state pelo botão iniciar.
-    """
-    marco            = st.session_state.get("snap_marco",            "Fundação")
-    latencia         = st.session_state.get("snap_latencia",         3)
+    lat_min          = st.session_state.get("snap_latencia_min",     2)
+    lat_max          = st.session_state.get("snap_latencia_max",     5)
     sobreposicao     = st.session_state.get("snap_sobreposicao",     0)
     usar_senioridade = st.session_state.get("snap_usar_senioridade", True)
     distancia_km     = st.session_state.get("snap_distancia_km",     50)
     permitir_cluster = st.session_state.get("snap_permitir_cluster", True)
 
     nn       = str(st.session_state.get("contador_cenario", 1)).zfill(2)
-    marco_cod = "FND" if marco == "Fundação" else "TRP"
-    lat_cod   = f"L{latencia}"
-    sob_cod   = f"S{sobreposicao}"
-    senc_cod  = "SC1" if usar_senioridade else "SC0"
-    dist_cod  = f"D{int(distancia_km)}"
-    clus_cod  = "CL0" if permitir_cluster else "CL1"
+    lmin_cod = f"Lmin{lat_min}"
+    lmax_cod = f"L{lat_max}"
+    sob_cod  = f"S{sobreposicao}"
+    senc_cod = "SC1" if usar_senioridade else "SC0"
+    dist_cod = f"D{int(distancia_km)}"
+    clus_cod = "CL0" if permitir_cluster else "CL1"
 
-    return f"{nn}-SEQ-CB-{marco_cod}-{lat_cod}-{sob_cod}-{senc_cod}-{dist_cod}-{clus_cod}.xlsx"
+    return f"{nn}-SEQ-CB-{lmin_cod}-{lmax_cod}-{sob_cod}-{senc_cod}-{dist_cod}-{clus_cod}.xlsx"
 
 
 def _incrementar_contador():
-    """Incrementa o NN a cada clique no botão de download."""
     st.session_state["contador_cenario"] = st.session_state.get("contador_cenario", 1) + 1
 
 
@@ -379,5 +393,4 @@ def render_download(df_output, df_emp):
         mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         on_click  = _incrementar_contador,
     )
-
     st.caption(f"📄 Nome do arquivo que será baixado: `{nome_arquivo}`")

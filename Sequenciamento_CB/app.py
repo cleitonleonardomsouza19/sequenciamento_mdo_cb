@@ -19,7 +19,6 @@ from core import (
 )
 from ui import (
     render_botao_iniciar,
-    render_configuracao_marco,
     render_diagnostico,
     render_download,
     render_filtro_latencia,
@@ -68,8 +67,8 @@ render_diagnostico(df_base)
 
 st.divider()
 
-render_configuracao_marco()
-render_filtro_latencia()
+# ── Parâmetros ──────────────────────────────────────────────
+render_filtro_latencia()          # mínima + máxima + sobreposição
 render_filtro_senioridade()
 render_filtro_distancia_cluster()
 
@@ -78,13 +77,15 @@ st.divider()
 if not render_botao_iniciar():
     st.stop()
 
-marco_inicio_obra_a        = st.session_state.get("snap_marco",            "Fundação")
-latencia_maxima_meses      = st.session_state.get("snap_latencia",         5)
-sobreposicao_maxima_meses  = st.session_state.get("snap_sobreposicao",     0)
-usar_senioridade           = st.session_state.get("snap_usar_senioridade", True)
-distancia_maxima_km        = st.session_state.get("snap_distancia_km",     75)
-permitir_cluster_diferente = st.session_state.get("snap_permitir_cluster", False)
+# ── Leitura dos snaps travados pelo botão ───────────────────
+latencia_minima_meses      = st.session_state.get("snap_latencia_min",      2)
+latencia_maxima_meses      = st.session_state.get("snap_latencia_max",      5)
+sobreposicao_maxima_meses  = st.session_state.get("snap_sobreposicao",      0)
+usar_senioridade           = st.session_state.get("snap_usar_senioridade",  True)
+distancia_maxima_km        = st.session_state.get("snap_distancia_km",      75)
+permitir_cluster_diferente = st.session_state.get("snap_permitir_cluster",  False)
 
+# ── Conversão de datas ──────────────────────────────────────
 for col in [C_DATA_FUND, C_DATA_TERRA, C_DATA_ENCERR]:
     if col in df_base.columns:
         df_base[col] = df_base[col].apply(converter_data_mrv)
@@ -93,6 +94,7 @@ for col in ["Fundação", "Terraplenagem", "Encerramento Módulo"]:
     if col in df_emp.columns:
         df_emp[col] = df_emp[col].apply(converter_data_mrv)
 
+# ── Pré-processamento ───────────────────────────────────────
 df_base[C_LINHA] = df_base.apply(montar_linha, axis=1)
 
 nomes_base_completo = set(df_base[C_OBRA].dropna().astype(str).str.strip().unique())
@@ -106,28 +108,31 @@ cidades_unicas = list(
 )
 coord_cache = obter_dicionario_coordenadas(tuple(sorted(cidades_unicas)))
 
+# ── Sequenciamento ──────────────────────────────────────────
 df_base_repr, obras_alocadas, nomes_dh_alocados = sequenciar_linhas_existentes(
     df_base_repr, df_emp, coord_cache, info_devolvidas,
-    latencia_maxima_dias=latencia_maxima_meses * 30,
-    sobreposicao_maxima_dias=sobreposicao_maxima_meses * 30,
-    nomes_base_completo=nomes_base_completo,
-    ids_base_completo=ids_base_completo,
-    usar_senioridade=usar_senioridade,
-    distancia_maxima_km=distancia_maxima_km,
-    permitir_cluster_diferente=permitir_cluster_diferente,
+    latencia_minima_dias       = latencia_minima_meses * 30,
+    latencia_maxima_dias       = latencia_maxima_meses * 30,
+    sobreposicao_maxima_dias   = sobreposicao_maxima_meses * 30,
+    nomes_base_completo        = nomes_base_completo,
+    ids_base_completo          = ids_base_completo,
+    usar_senioridade           = usar_senioridade,
+    distancia_maxima_km        = distancia_maxima_km,
+    permitir_cluster_diferente = permitir_cluster_diferente,
 )
 
 df_novas_linhas = sequenciar_novas_linhas(
     df_emp, coord_cache, obras_alocadas, info_devolvidas,
-    latencia_maxima_dias=latencia_maxima_meses * 30,
-    sobreposicao_maxima_dias=sobreposicao_maxima_meses * 30,
-    nomes_dh_alocados=nomes_dh_alocados,
-    distancia_maxima_km=distancia_maxima_km,
+    latencia_minima_dias     = latencia_minima_meses * 30,
+    latencia_maxima_dias     = latencia_maxima_meses * 30,
+    sobreposicao_maxima_dias = sobreposicao_maxima_meses * 30,
+    nomes_dh_alocados        = nomes_dh_alocados,
+    distancia_maxima_km      = distancia_maxima_km,
 )
 
 mapa_emp  = df_emp.set_index(C_ID_EMP).to_dict(orient="index")
 df_output = montar_output_empilhado(
-    df_base_repr, info_devolvidas, df_novas_linhas, mapa_emp, marco_inicio_obra_a
+    df_base_repr, info_devolvidas, df_novas_linhas, mapa_emp
 )
 
 st.divider()
